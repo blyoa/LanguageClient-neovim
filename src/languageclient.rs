@@ -61,43 +61,7 @@ impl State {
         )?;
         logger::update_settings(&self.logger, &loggingFile, &loggingLevel)?;
 
-        #[allow(unknown_lints)]
-        #[allow(type_complexity)]
-        let (
-            autoStart,
-            serverCommands,
-            selectionUI,
-            trace,
-            settingsPath,
-            loadSettings,
-            rootMarkers,
-            change_throttle,
-            wait_output_timeout,
-            diagnosticsEnable,
-            diagnosticsList,
-            diagnosticsDisplay,
-            windowLogMessageLevel,
-            hoverPreview,
-            completionPreferTextEdit,
-            is_nvim,
-        ): (
-            u64,
-            HashMap<String, Vec<String>>,
-            Option<String>,
-            Option<String>,
-            String,
-            u64,
-            Option<RootMarkers>,
-            Option<f64>,
-            Option<f64>,
-            u64,
-            Option<String>,
-            Value,
-            String,
-            Option<String>,
-            u64,
-            u64,
-        ) = self.eval(
+        let vimSetting: VimSetting = self.eval(
             [
                 "!!get(g:, 'LanguageClient_autoStart', 1)",
                 "get(g:, 'LanguageClient_serverCommands', {})",
@@ -111,17 +75,19 @@ impl State {
                 "!!get(g:, 'LanguageClient_diagnosticsEnable', 1)",
                 "get(g:, 'LanguageClient_diagnosticsList', 'Quickfix')",
                 "get(g:, 'LanguageClient_diagnosticsDisplay', {})",
+                "get(g:, 'LanguageClient_diagnosticsSignsMax', v:null)",
                 "get(g:, 'LanguageClient_windowLogMessageLevel', 'Warning')",
                 "get(g:, 'LanguageClient_hoverPreview', 'Auto')",
                 "get(g:, 'LanguageClient_completionPreferTextEdit', 0)",
                 "has('nvim')",
             ].as_ref(),
         )?;
-        // vimscript use 1 for true, 0 for false.
-        let autoStart = autoStart == 1;
-        let loadSettings = loadSettings == 1;
 
-        let trace = if let Some(t) = trace {
+        // vimscript use 1 for true, 0 for false.
+        let autoStart = vimSetting.autoStart == 1;
+        let loadSettings = vimSetting.loadSettings == 1;
+
+        let trace = if let Some(ref t) = vimSetting.trace {
             match t.to_ascii_uppercase().as_str() {
                 "OFF" => Some(TraceOption::Off),
                 "MESSAGES" => Some(TraceOption::Messages),
@@ -132,7 +98,7 @@ impl State {
             Some(TraceOption::default())
         };
 
-        let selectionUI = if let Some(s) = selectionUI {
+        let selectionUI = if let Some(ref s) = vimSetting.selectionUI {
             SelectionUI::from_str(&s)?
         } else if self.eval::<_, i64>("get(g:, 'loaded_fzf')")? == 1 {
             SelectionUI::FZF
@@ -140,53 +106,61 @@ impl State {
             SelectionUI::default()
         };
 
-        let change_throttle = change_throttle.map(|t| Duration::from_millis((t * 1000.0) as u64));
+        let change_throttle = vimSetting
+            .change_throttle
+            .map(|t| Duration::from_millis((t * 1000.0) as u64));
         let wait_output_timeout =
-            Duration::from_millis((wait_output_timeout.unwrap_or(10.0) * 1000.0) as u64);
+            Duration::from_millis((vimSetting.wait_output_timeout.unwrap_or(10.0) * 1000.0) as u64);
 
-        let diagnosticsEnable = diagnosticsEnable == 1;
+        let diagnosticsEnable = vimSetting.diagnosticsEnable == 1;
 
-        let diagnosticsList = if let Some(s) = diagnosticsList {
+        let diagnosticsList = if let Some(ref s) = vimSetting.diagnosticsList {
             DiagnosticsList::from_str(&s)?
         } else {
             DiagnosticsList::Disabled
         };
 
-        let windowLogMessageLevel = match windowLogMessageLevel.to_ascii_uppercase().as_str() {
+        let windowLogMessageLevel = match vimSetting
+            .windowLogMessageLevel
+            .to_ascii_uppercase()
+            .as_str()
+        {
             "ERROR" => MessageType::Error,
             "WARNING" => MessageType::Warning,
             "INFO" => MessageType::Info,
             "LOG" => MessageType::Log,
             _ => bail!(
                 "Invalid option for LanguageClient_windowLogMessageLevel: {}",
-                windowLogMessageLevel
+                vimSetting.windowLogMessageLevel
             ),
         };
 
-        let hoverPreview = if let Some(s) = hoverPreview {
+        let hoverPreview = if let Some(ref s) = vimSetting.hoverPreview {
             HoverPreviewOption::from_str(&s)?
         } else {
             HoverPreviewOption::Auto
         };
 
-        let completionPreferTextEdit = completionPreferTextEdit == 1;
+        let completionPreferTextEdit = vimSetting.completionPreferTextEdit == 1;
 
-        let is_nvim = is_nvim == 1;
+        let is_nvim = vimSetting.is_nvim == 1;
 
         self.update(|state| {
             state.autoStart = autoStart;
-            state.serverCommands.extend(serverCommands);
+            state.serverCommands.extend(vimSetting.serverCommands);
             state.selectionUI = selectionUI;
             state.trace = trace;
             state.diagnosticsEnable = diagnosticsEnable;
             state.diagnosticsList = diagnosticsList;
             state.diagnosticsDisplay = serde_json::from_value(
-                serde_json::to_value(&state.diagnosticsDisplay)?.combine(diagnosticsDisplay),
+                serde_json::to_value(&state.diagnosticsDisplay)?
+                    .combine(vimSetting.diagnosticsDisplay),
             )?;
+            state.diagnosticsSignsMax = vimSetting.diagnosticsSignsMax;
             state.windowLogMessageLevel = windowLogMessageLevel;
-            state.settingsPath = settingsPath;
+            state.settingsPath = vimSetting.settingsPath;
             state.loadSettings = loadSettings;
-            state.rootMarkers = rootMarkers;
+            state.rootMarkers = vimSetting.rootMarkers;
             state.change_throttle = change_throttle;
             state.wait_output_timeout = wait_output_timeout;
             state.hoverPreview = hoverPreview;
@@ -376,6 +350,9 @@ impl State {
                 .collect();
             signs.sort_unstable();
             signs.dedup_by_key(|s| s.line);
+            if let Some(diagnosticSignsMax) = self.diagnosticsSignsMax {
+                signs.truncate(diagnosticSignsMax as usize);
+            }
 
             let cmd = self.update(|state| {
                 let signs_prev = state.signs.remove(filename).unwrap_or_default();

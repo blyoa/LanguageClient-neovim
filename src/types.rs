@@ -120,6 +120,7 @@ pub struct State {
     pub diagnosticsEnable: bool,
     pub diagnosticsList: DiagnosticsList,
     pub diagnosticsDisplay: HashMap<u64, DiagnosticsDisplay>,
+    pub diagnosticsSignsMax: Option<u64>,
     pub windowLogMessageLevel: MessageType,
     pub settingsPath: String,
     pub loadSettings: bool,
@@ -176,6 +177,7 @@ impl State {
             diagnosticsEnable: true,
             diagnosticsList: DiagnosticsList::Quickfix,
             diagnosticsDisplay: DiagnosticsDisplay::default(),
+            diagnosticsSignsMax: None,
             windowLogMessageLevel: MessageType::Warning,
             settingsPath: format!(".vim{}settings.json", std::path::MAIN_SEPARATOR),
             loadSettings: false,
@@ -373,6 +375,27 @@ impl Hash for Sign {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
+}
+
+#[derive(Deserialize)]
+pub struct VimSetting {
+    pub autoStart: u64,
+    pub serverCommands: HashMap<String, Vec<String>>,
+    pub selectionUI: Option<String>,
+    pub trace: Option<String>,
+    pub settingsPath: String,
+    pub loadSettings: u64,
+    pub rootMarkers: Option<RootMarkers>,
+    pub change_throttle: Option<f64>,
+    pub wait_output_timeout: Option<f64>,
+    pub diagnosticsEnable: u64,
+    pub diagnosticsList: Option<String>,
+    pub diagnosticsDisplay: Value,
+    pub diagnosticsSignsMax: Option<u64>,
+    pub windowLogMessageLevel: String,
+    pub hoverPreview: Option<String>,
+    pub completionPreferTextEdit: u64,
+    pub is_nvim: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
